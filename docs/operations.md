@@ -34,10 +34,12 @@ gh workflow run publish.yml \
 ```
 
 Replace the repository and tag with the published producer release you are
-replaying. The workflow calls
-`meigma/release/.github/workflows/publish-package-repository.yml` at
-`0dee66ff6c4cc7e28d7bb65e97a37d701e0eff4a` (v0.1.17) and selects
-`packages-production`. Concurrent production writes share the
+replaying. The workflow runs the receiver steps locally, pinning the
+`meigma/release` setup actions and `release-cli` to
+`0dee66ff6c4cc7e28d7bb65e97a37d701e0eff4a` (v0.1.17), and selects
+`packages-production`. It is a local workflow rather than a reusable-workflow
+call because GitHub does not deliver environment secrets to a reusable
+workflow owned by another organization (meigma/release#67). Concurrent production writes share the
 `package-repository-production` group and are not cancelled.
 
 A producer `repository_dispatch` uses the same path: event type
