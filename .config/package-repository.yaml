@@ -1,0 +1,24 @@
+channel: stable
+origin: https://pkgs.componere.dev
+keys:
+  apt:
+    source: keys/repository.asc
+    published: apt-repository-001.asc
+  rpm:
+    source: keys/repository.asc
+    published: rpm-repository-001.asc
+  apk:
+    source: keys/repository-apk.rsa.pub
+    published: apk-index-001.rsa.pub
+producers:
+  - repository: componere/incusos-builder
+    packages:
+      - incusos-builder
+    checksum_identity: https://github.com/meigma/release/.github/workflows/go-pre-publish.yml@0dee66ff6c4cc7e28d7bb65e97a37d701e0eff4a
+    attestation_signer: meigma/release/.github/workflows/publish-github-release.yml
+    rpm_key:
+      source: keys/incusos-builder-rpm.asc
+      published: incusos-builder-rpm-001.asc
+    apk_key:
+      source: keys/incusos-builder-apk.rsa.pub
+      published: incusos-builder-apk-001.rsa.pub
