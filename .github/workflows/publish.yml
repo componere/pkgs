@@ -1,3 +1,20 @@
+# Central package-repository receiver.
+#
+# This is a LOCAL workflow rather than a `uses:` call to
+# meigma/release/.github/workflows/publish-package-repository.yml. GitHub does
+# not deliver a caller's environment secrets to a reusable workflow owned by a
+# different organization, so the reusable receiver's environment-scoped
+# aggregate signing and R2 secrets resolve empty for every cross-organization
+# adopter (meigma/release#67). Running the same steps as a local job keeps the
+# aggregate private keys environment-only, exactly as the trust model requires.
+#
+# The steps below mirror publish-package-repository.yml at the pinned release
+# unit 0dee66ff6c4cc7e28d7bb65e97a37d701e0eff4a (v0.1.17). The two setup
+# actions are pinned to that same commit, and setup-release-cli downloads the
+# stamped v0.1.17 release-cli from meigma/release with checksum and GitHub
+# attestation verification. When bumping the release unit, re-diff this file
+# against the upstream receiver at the new pin.
+
 name: Publish package release
 
 on:
@@ -20,13 +37,72 @@ permissions: {}
 jobs:
   publish:
     name: Publish package repository
+    runs-on: ubuntu-24.04
+    environment: packages-production
+    timeout-minutes: 45
+    concurrency:
+      group: package-repository-production
+      cancel-in-progress: false
     permissions:
       attestations: read
       contents: read
-    uses: meigma/release/.github/workflows/publish-package-repository.yml@0dee66ff6c4cc7e28d7bb65e97a37d701e0eff4a # v0.1.17
-    with:
-      repository: ${{ inputs.repository || github.event.client_payload.repository }}
-      tag: ${{ inputs.tag || github.event.client_payload.tag }}
-      cloudflare-account-id: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      r2-bucket: ${{ vars.PACKAGE_REPOSITORY_R2_BUCKET }}
-    secrets: inherit
+    steps:
+      - name: Check out repository policy and public keys
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up verification tools
+        uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          version: 2026.8.8
+          mise_toml: |
+            [tools]
+            "aqua:cli/cli" = "2.97.0"
+            "aqua:sigstore/cosign" = "3.1.3"
+          install_args: 'aqua:cli/cli aqua:sigstore/cosign'
+          cache: true
+
+      - name: Set up release-cli from the pinned release unit
+        id: setup-cli
+        uses: meigma/release/.github/actions/setup-release-cli@0dee66ff6c4cc7e28d7bb65e97a37d701e0eff4a # v0.1.17
+
+      - name: Set up aggregate repository signing
+        id: signing
+        uses: meigma/release/.github/actions/setup-package-repository@0dee66ff6c4cc7e28d7bb65e97a37d701e0eff4a # v0.1.17
+        with:
+          gpg-private-key: ${{ secrets.PACKAGE_REPOSITORY_GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.PACKAGE_REPOSITORY_GPG_PASSPHRASE }}
+          apk-private-key: ${{ secrets.PACKAGE_REPOSITORY_APK_PRIVATE_KEY }}
+
+      - name: Publish verified native packages
+        shell: bash
+        env:
+          RELEASE_CLI: ${{ steps.setup-cli.outputs.cli-path }}
+          PRODUCER_REPOSITORY: ${{ inputs.repository || github.event.client_payload.repository }}
+          PRODUCER_TAG: ${{ inputs.tag || github.event.client_payload.tag }}
+          PACKAGE_CONFIG: .config/package-repository.yaml
+          PACKAGE_KEYS: .config
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          RELEASE_R2_BUCKET: ${{ vars.PACKAGE_REPOSITORY_R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_GPG_HOME: ${{ steps.signing.outputs.gpg-home }}
+          RELEASE_GPG_KEY_ID: ${{ steps.signing.outputs.gpg-key-id }}
+          RELEASE_GPG_PASSPHRASE_FILE: ${{ steps.signing.outputs.gpg-passphrase-file }}
+          RELEASE_APK_SIGNING_KEY: ${{ steps.signing.outputs.apk-private-key-file }}
+        run: |
+          set -euo pipefail
+          "${RELEASE_CLI}" publish package-repository \
+            --repository "${PRODUCER_REPOSITORY}" \
+            --tag "${PRODUCER_TAG}" \
+            --config "${PACKAGE_CONFIG}" \
+            --keys "${PACKAGE_KEYS}" \
+            --cloudflare-account-id "${CLOUDFLARE_ACCOUNT_ID}" \
+            --r2-bucket "${RELEASE_R2_BUCKET}" \
+            --gpg-home "${RELEASE_GPG_HOME}" \
+            --gpg-key-id "${RELEASE_GPG_KEY_ID}" \
+            --gpg-passphrase-file "${RELEASE_GPG_PASSPHRASE_FILE}" \
+            --apk-signing-key "${RELEASE_APK_SIGNING_KEY}" \
+            --json
